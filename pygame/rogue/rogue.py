@@ -3,6 +3,7 @@
 import libtcodpy as tcod
 import math
 import textwrap
+import shelve
 
 #actual size of the window
 SCREEN_WIDTH = 80
@@ -280,7 +281,10 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].block_sight = False
 
 def make_map():
-    global map, player
+    global map, objects
+
+    #the list of objects with just the player
+    objects = [player]
 
     #fill map with blocked tiles
     map = [[ Tile(True) for y in range(MAP_HEIGHT) ]
@@ -590,6 +594,9 @@ def inventory_menu(header):
     if index is None or len(inventory) == 0: return None
     return inventory[index].item
 
+def msgbox(text, width=50):
+    menu(text, [], width) #use menu() as sort of a "message box"
+
 def handle_keys():
     key = tcod.console_wait_for_keypress(True)
 
@@ -750,66 +757,127 @@ def cast_confuse():
     monster.ai.owner = monster #tell the component who owns it
     message('The eyes of the ' + monster.name + ' look vacant, as he starts to stumble around.', tcod.light_green)
 
-##################
-#Init & Main Loop#
-##################
+def save_game():
+    #open a new empty shelve (possibly overwriting the old one) to write the game data
+    file = shelve.open('savegame', 'n')
+    file['map'] = map
+    file['objects'] = objects
+    file['player_index'] = objects.index(player) #index of player in objects list
+    file['inventory'] = inventory
+    file['game_msgs'] = game_msgs
+    file['game_state'] = game_state
+    file.close()
+
+def load_game():
+    #open the previously saved shelve an load teh game data
+    global map, objects, player, inventory, game_msgs, game_state
+
+    file = shelve.open('savegame', 'r')
+    map = file['map']
+    objects = file['objects']
+    player = objects[file['player_index']] #get the index of player in objects and access it
+    inventory = file['inventory']
+    game_msgs = file['game_msgs']
+    game_state = file['game_state']
+    file.close()
+
+    initailize_fov()
+
+def new_game():
+    global player, inventory, game_msgs, game_state
+
+    #create the object representing the player
+    fighter_component = Fighter(hp=30, defense=2, power=5, death_function=player_death)
+    player = Object(0, 0, '@', 'player', tcod.white, blocks=True, fighter=fighter_component)
+
+    #generate the map (at this point it's not drawn to the screen)
+    make_map()
+    initialize_fov()
+
+    game_state = 'playing'
+    inventory = []
+
+    #create a list of game messages and their colors, starts empty
+    game_msgs = []
+
+    message('Welcom stranger, prepare to perish', tcod.red)
+
+def initialize_fov():
+    global fov_recompute, fov_map
+    fov_recompute = True
+
+    #create FOV map according to generated map
+    fov_map = tcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+    for y in range(MAP_HEIGHT):
+        for x in range(MAP_WIDTH):
+            tcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+
+    tcod.console_clear(con) #unexplored areas start black
+
+def play_game():
+    global key, mouse
+
+    player_action = None
+
+    mouse = tcod.Mouse()
+    key = tcod.Key()
+    while not tcod.console_is_window_closed():
+        #render the screen
+        tcod.sys_check_for_event(tcod.EVENT_KEY_PRESS|tcod.EVENT_MOUSE,key,mouse)
+        render_all()
+
+        tcod.console_flush()
+
+        #erase all objects at their old location, before they move
+        for object in objects:
+            object.clear()
+
+        #handle keys and exit game if needed
+        player_action = handle_keys()
+        if player_action == 'exit':
+            save_game()
+            break
+
+        #let monsters take their turn
+        if game_state == 'playing' and player_action != 'didnt-take-turn':
+            for object in objects:
+                if object.ai:
+                    object.ai.take_turn()
+
+def main_menu():
+    img = tcod.image_load('menu_background.png')
+
+    while not tcod.console_is_window_closed():
+        #show background image at twice the regular console resolution
+        tcod.image_blit_2x(img, 0, 0, 0)
+
+        #show the title
+        tcod.console_set_default_foreground(0, tcod.light_yellow)
+        tcod.console_print_ex(0, SCREEN_WIDTH//2, SCREEN_HEIGHT//2-4, tcod.BKGND_NONE, tcod.CENTER, 'Rougelike')
+        tcod.console_print_ex(0, SCREEN_WIDTH//2, SCREEN_HEIGHT//2-3, tcod.BKGND_NONE, tcod.CENTER, 'By Reeves')
+
+        #show options and wait for player choice
+        choice = menu('', ['Play New Game', 'Continue Last Game', 'Quit'], 24)
+
+        if choice == 0: #new game
+            new_game()
+            play_game()
+        if choice == 1: #Load last save
+            try:
+                load_game()
+            except:
+                msgbox('\n No saved game to load.\n', 24)
+                continue
+            play_game()
+        elif choice == 2: #quit
+            break
+
+
+
 tcod.console_set_custom_font('arial10x10.png', tcod.FONT_TYPE_GREYSCALE | tcod.FONT_LAYOUT_TCOD)
-tcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Rogue', False)
+tcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Roguelike', False)
 tcod.sys_set_fps(LIMIT_FPS)
 con = tcod.console_new(MAP_WIDTH, MAP_HEIGHT)
 panel = tcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 
-#create the object representing the player
-fighter_component = Fighter(hp=30, defense=2, power=5, death_function=player_death)
-player = Object(0, 0, '@', 'player', tcod.white, blocks=True, fighter=fighter_component)
-
-#the list of objects, starting with the player
-objects = [player]
-
-#generate the map (at this point it's not drawn to the screen)
-make_map()
-
-#create FOV map according to generated map
-fov_map = tcod.map_new(MAP_WIDTH, MAP_HEIGHT)
-for y in range(MAP_HEIGHT):
-    for x in range(MAP_WIDTH):
-        tcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
-
-fov_recompute = True
-game_state = 'playing'
-player_action = None
-
-#create the inventory list, start empty
-inventory = []
-
-#create the list of mesages and colors, starts empty
-game_msgs = []
-
-#a warm welcoming message
-message('Welcome stranger, prepare to perish', tcod.red)
-
-mouse = tcod.Mouse()
-key = tcod.Key()
-
-while not tcod.console_is_window_closed():
-
-    #render the screen
-    tcod.sys_check_for_event(tcod.EVENT_KEY_PRESS|tcod.EVENT_MOUSE,key,mouse)
-    render_all()
-
-    tcod.console_flush()
-
-    #erase all objects at their old location, before they move
-    for object in objects:
-        object.clear()
-
-    #handle keys and exit game if needed
-    player_action = handle_keys()
-    if player_action == 'exit':
-        break
-
-    #let monsters take their turn
-    if game_state == 'playing' and player_action != 'didnt-take-turn':
-        for object in objects:
-            if object.ai:
-                object.ai.take_turn()
+main_menu()
