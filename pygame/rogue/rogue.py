@@ -33,7 +33,7 @@ HEAL_AMOUNT = 4
 LIGHTNING_DAMAGE = 20
 LIGHTNING_RANGE = 5
 CONFUSE_RANGE = 8
-CONFUSE_DURATION = 10
+CONFUSED_DURATION = 10
 FIREBALL_RADIUS = 2
 FIREBALL_DAMAGE = 12
 
@@ -128,7 +128,7 @@ class Object:
 
     def distance(self, x, y):
         #return the distance to some coordinates
-        return math.sqrt((x - self.x) ** 2 + (y - slef.y) ** 2)
+        return math.sqrt((x - self.x) ** 2 + (y - self.y) ** 2)
 
     def send_to_back(self):
         #make this object drawn first, so all others appear above it if they're in the same tile
@@ -199,14 +199,14 @@ class BasicMonster:
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
 
-def ConfusedMonster:
+class ConfusedMonster:
     #AI for a temporarily confused monster (reverts to basicmonster after awhile)
     def __init__(self, old_ai, num_turns=CONFUSED_DURATION):
         self.old_ai = old_ai
         self.num_turns = num_turns
 
     def take_turn(self):
-        if self.num_turn > 0: #still confused...
+        if self.num_turns > 0: #still confused...
             #move in a random direction, and decrease the number of turns confused
             self.owner.move(tcod.random_get_int(0, -1, 1), tcod.random_get_int(0, -1, 1))
             self.num_turns -= 1
@@ -246,9 +246,11 @@ class Item:
                 inventory.remove(self.owner) #destroy after use unless it was cancelled for some reason
 
 def is_blocked(x, y):
+    #first test the map tile
     if map[x][y].blocked:
         return True
 
+    #now check for any blocking objects
     for object in objects:
         if object.blocks and object.x == x and object.y == y:
             return True
@@ -257,7 +259,7 @@ def is_blocked(x, y):
 
 def create_room(room):
     global map
-
+    #go through the tiles in the rectangle and make them visible
     for x in range(room.x1 + 1, room.x2):
         for y in range(room.y1 + 1, room.y2):
             map[x][y].blocked = False
@@ -265,14 +267,14 @@ def create_room(room):
 
 def create_h_tunnel(x1, x2, y):
     global map
-
+    #horizontal tunnel, min() and max() are used in case x1>x2
     for x in range(min(x1, x2), max(x1, x2) + 1):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
 def create_v_tunnel(y1, y2, x):
     global map
-
+    #vertical tunnel
     for y in range(min(y1, y2), max(y1, y2) + 1):
         map[x][y].blocked = False
         map[x][y].block_sight = False
@@ -280,6 +282,7 @@ def create_v_tunnel(y1, y2, x):
 def make_map():
     global map, player
 
+    #fill map with blocked tiles
     map = [[ Tile(True) for y in range(MAP_HEIGHT) ]
             for x in range(MAP_WIDTH)
     ]
@@ -288,13 +291,17 @@ def make_map():
     num_rooms = 0
 
     for r in range(MAX_ROOMS):
+        #random width and height
         w = tcod.random_get_int(0, ROOM_MIN_SIZE, ROOM_MAX_SIZE)
         h = tcod.random_get_int(0, ROOM_MIN_SIZE, ROOM_MAX_SIZE)
+        #random position without going out of the boundaries of the map
         x = tcod.random_get_int(0, 0, MAP_WIDTH - w - 1)
         y = tcod.random_get_int(0, 0, MAP_HEIGHT - h - 1)
 
+        #"Rect" class makes rectangles easier to work with
         new_room = Rect(x, y, w, h)
 
+        #run through the other rooms and see if they intersect with this one
         failed = False
         for other_room in rooms:
             if new_room.intersect(other_room):
@@ -302,46 +309,65 @@ def make_map():
                 break
 
         if not failed:
+            #this means there are no intersections, so the room is valid
+
+            #"paint" it to the maps tiles
             create_room(new_room)
 
+            #center coordinates of the new room, wil be usefull later
             (new_x, new_y) = new_room.center()
 
             if num_rooms == 0:
+                #this is the first room, where the player starts at
                 player.x = new_x
                 player.y = new_y
 
             else:
+                #all other rooms after the first:
+                #connect it to the previous room with a tunnel
+
+                #center coordinates of previous room
                 (prev_x, prev_y) = rooms[num_rooms -1].center()
 
+                #flip a coin (0 or 1)
                 if tcod.random_get_int(0, 0, 1) == 1:
+                    #first move horizontally then vertically
                     create_h_tunnel(prev_x, new_x, prev_y)
                     create_v_tunnel(prev_y, new_y, new_x)
 
                 else:
+                    #first move vertically then horizontally
                     create_v_tunnel(prev_y, new_y, prev_x)
                     create_h_tunnel(prev_x, new_x, new_y)
 
+            #add some contents to this room, such as monsters
             place_objects(new_room)
 
+            #finally append the new room to the list
             rooms.append(new_room)
             num_rooms += 1
 
 
 def place_objects(room):
+    #choose random number of monsters
     num_monsters = tcod.random_get_int(0, 0, MAX_ROOM_MONSTERS)
 
     for i in range(num_monsters):
+        #choose random spot for this monster
         x = tcod.random_get_int(0, room.x1+1, room.x2-1)
         y = tcod.random_get_int(0, room.y1+1, room.y2-1)
 
+        #only place if the tile is not blocked
         if not is_blocked(x, y):
-            if tcod.random_get_int(0, 0, 100) < 80:
+            if tcod.random_get_int(0, 0, 100) < 80: #80% chance of getting an orc
+                #create an orc
                 fighter_component = Fighter(hp=16, defense=0, power=3, death_function=monster_death)
                 ai_component = BasicMonster()
 
                 monster = Object(x, y, 'o', 'orc', tcod.desaturated_green, blocks = True, fighter=fighter_component, ai=ai_component)
 
             else:
+                #create a troll
                 fighter_component = Fighter(hp=16, defense=1, power=4, death_function=monster_death)
                 ai_component = BasicMonster()
 
@@ -349,30 +375,55 @@ def place_objects(room):
 
             objects.append(monster)
 
+    #choose a random number of items
     num_items = tcod.random_get_int(0, 0, MAX_ROOM_ITEMS)
 
     for i in range(num_items):
+        #choose a random spot for the item
         x = tcod.random_get_int(0, room.x1+1, room.x2-1)
         y = tcod.random_get_int(0, room.y1+1, room.y2-1)
 
+        #only place if the tile is not blocked
         if not is_blocked(x, y):
-            item_component = Item(use_function=cast_heal)
+            dice = tcod.random_get_int(0, 0, 100)
+            if dice < 70:
+                #create a healing potion(70% chance)
+                item_component = Item(use_function=cast_heal)
 
-            item = Object(x, y, '!', 'healing potion', tcod.violet, item=item_component)
+                item = Object(x, y, '!', 'healing potion', tcod.violet, item=item_component)
+            elif dice < 70+10:
+                #create a lightning bolt scroll (10% chance)
+                item_component = Item(use_function=cast_lightning)
+
+                item = Object(x, y, '#', 'scroll of lightning bolt', tcod.light_yellow, item=item_component)
+            elif dice < 70+10+10:
+                #create a fireball scroll (10% chance)
+                item_component = Item(use_function=cast_fireball)
+
+                item = Object(x, y, '#', 'scroll of fireball', tcod.light_red, item=item_component)
+            else:
+                #create a confusion scroll (10% chance)
+                item_component = Item(use_function=cast_confuse)
+
+                item = Object(x, y, '#', 'scroll of confuse', tcod.light_green, item=item_component)
 
             objects.append(item)
-            item.send_to_back()
+            item.send_to_back() #items appear below other objects
 
 def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
+    #render a bar (HP, experiance, etc.). First calculate the width of the bar
     bar_width = int(float(value) / maximum * total_width)
 
+    #render the background first
     tcod.console_set_default_background(panel, back_color)
     tcod.console_rect(panel, x, y, total_width, 1, False, tcod.BKGND_SCREEN)
 
+    #now render the bar on top
     tcod.console_set_default_background(panel, bar_color)
     if bar_width > 0:
         tcod.console_rect(panel, x, y, bar_width, 1, False, tcod.BKGND_SCREEN)
 
+    #finally some centered text with values
     tcod.console_set_default_foreground(panel, tcod.white)
     tcod.console_print_ex(panel, x + total_width // 2, y, tcod.BKGND_NONE, tcod.CENTER,
             name + ': ' + str(value) + '/' + str(maximum))
@@ -380,12 +431,14 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
 def get_names_under_mouse():
     global mouse
 
+    #return a string with the names of all objects under the mouse
     (x, y) = (mouse.cx, mouse.cy)
 
+    #create a list with the names of all objects at the mouse's coordinates and in FOV
     names = [obj.name for obj in objects
             if obj.x == x and obj.y == y and tcod.map_is_in_fov(fov_map, obj.x, obj.y)]
 
-    names = ', '.join(names)
+    names = ', '.join(names) #joins the names seperated by commas
     return names.capitalize()
 
 def render_all():
@@ -394,73 +447,92 @@ def render_all():
     global fov_recompute
 
     if fov_recompute:
+        #recompute FOV if needed (the player moved or something)
         fov_recompute = False
         tcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
 
+        #go through all the tiles and set their background color according to the FOV
         for y in range(MAP_HEIGHT):
             for x in range(MAP_WIDTH):
                 visible = tcod.map_is_in_fov(fov_map, x, y)
                 wall = map[x][y].block_sight
                 if not visible:
+                    #if it's not visible right now, the player can only see it if it's explored
                     if map[x][y].explored:
                         if wall:
                             tcod.console_set_char_background(con, x, y, color_dark_wall, tcod.BKGND_SET)
                         else:
                             tcod.console_set_char_background(con, x, y, color_dark_ground, tcod.BKGND_SET)
                 else:
+                    #it's visible
                     if wall:
                         tcod.console_set_char_background(con, x, y, color_light_wall, tcod.BKGND_SET )
                     else:
                         tcod.console_set_char_background(con, x, y, color_light_ground, tcod.BKGND_SET )
+                    #since it's visible, explore it
                     map[x][y].explored = True
 
+    #draw all objects in the list, except the player, we want it to
+    #always appear ovar all other objects, so it's drawn later
     for object in objects:
         if object != player:
             object.draw()
     player.draw()
 
+    #blit the contents of "con" to the root console
     tcod.console_blit(con, 0, 0, MAP_WIDTH, MAP_HEIGHT, 0, 0, 0)
 
+    #prepare to render the GUI panel
     tcod.console_set_default_background(panel, tcod.black)
     tcod.console_clear(panel)
 
+    #print the game messages, one line at a time
     y = 1
     for (line, color) in game_msgs:
         tcod.console_set_default_foreground(panel, color)
         tcod.console_print_ex(panel, MSG_X, y, tcod.BKGND_NONE, tcod.LEFT, line)
         y += 1
 
+    #render the players stats
     render_bar(1, 1, BAR_WIDTH, 'HP', player.fighter.hp, player.fighter.max_hp,
             tcod.light_red, tcod.darker_red)
 
+    #display the names of objects under the mouse
     tcod.console_set_default_foreground(panel, tcod.light_gray)
     tcod.console_print_ex(panel, 1, 0, tcod.BKGND_NONE, tcod.LEFT, get_names_under_mouse())
 
+    #blit the contents of "panel" to the root root console
     tcod.console_blit(panel, 0, 0, SCREEN_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_Y)
 
 
 def message(new_msg, color = tcod.white):
+    #split the message if necessary, among multiple lines
     new_msg_lines = textwrap.wrap(new_msg, MSG_WIDTH)
 
     for line in new_msg_lines:
+        #if the buffer is full, remove the first line to make room for the new one
         if len(game_msgs) == MSG_HEIGHT:
             del game_msgs[0]
 
+        #add the new line as a tuple, with the text and the color
         game_msgs.append( (line, color) )
 
 
 def player_move_or_attack(dx, dy):
     global fov_recompute
 
+    #the coordinates the player is moving to/attacking
     x = player.x + dx
     y = player.y + dy
 
+    #try to find an attackable object there
     target = None
     for object in objects:
         if object.fighter and object.x == x and object.y == y:
             target = object
             break
 
+    #attack if target found, move otherwise
     if target is not None:
         player.fighter.attack(target)
 
@@ -471,14 +543,18 @@ def player_move_or_attack(dx, dy):
 def menu(header, options, width):
     if len(options) > 26: raise ValueError('Cannot have a menu with more than 26 options.')
 
+    #calculate total height for the header (after auto-wrap) and one line per option
     header_height = tcod.console_get_height_rect(con, 0, 0, width, SCREEN_HEIGHT, header)
     height = len(options) + header_height
 
+    #create an off screen console that represents the menu's window
     window = tcod.console_new(width, height)
 
+    #print the header with auto-wrap
     tcod.console_set_default_foreground(window, tcod.white)
     tcod.console_print_rect_ex(window, 0, 0, width, height, tcod.BKGND_NONE, tcod.LEFT, header)
 
+    #print all the options
     y = header_height
     letter_index = ord('a')
     for option_text in options:
@@ -487,18 +563,22 @@ def menu(header, options, width):
         y += 1
         letter_index += 1
 
+    #blit the contents of "window" to the root console
     x = SCREEN_WIDTH//2 - width//2
     y = SCREEN_HEIGHT//2 - height//2
     tcod.console_blit(window, 0, 0, width, height, 0, x, y, 1.0, 0.7)
 
+    #present the root console to the player and wait for key press
     tcod.console_flush()
     key = tcod.console_wait_for_keypress(True)
 
+    #convert the ASCII codes to an index; if it corresponds to an option return it
     index = key.c - ord('a')
     if index >= 0 and index < len(options): return index
     return None
 
 def inventory_menu(header):
+    #show a menu with each item of the inventory as an option
     if len(inventory) == 0:
         options = ['Inventory is empty.']
     else:
@@ -506,6 +586,7 @@ def inventory_menu(header):
 
     index = menu(header, options, INVENTORY_WIDTH)
 
+    #if an item was chosen, return it
     if index is None or len(inventory) == 0: return None
     return inventory[index].item
 
@@ -513,12 +594,14 @@ def handle_keys():
     key = tcod.console_wait_for_keypress(True)
 
     if key.vk == tcod.KEY_ENTER and key.lalt:
+        #Alt-Enter: toggle fullscreen
         tcod.console_set_fullscreen(not tcod.console_is_fullscreen())
 
     elif key.vk == tcod.KEY_ESCAPE:
-        return 'exit'
+        return 'exit' #exit game
 
     if game_state == 'playing':
+        #movement keys
         if tcod.console_is_key_pressed(tcod.KEY_UP):
             player_move_or_attack(0, -1)
 
@@ -532,30 +615,43 @@ def handle_keys():
             player_move_or_attack(1, 0)
 
         else:
+            #test for other keys
             key_char = chr(key.c)
 
             if key_char == 'g':
-                for object in objects:
+                #pick up an item
+                for object in objects: #look for an item in players tile
                     if object.x == player.x and object.y == player.y and object.item:
                         object.item.pick_up()
                         break
 
             if key_char == 'i':
+                #show current inventory; if an item is selected use it
                 chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
                 if chosen_item is not None:
                     chosen_item.use()
 
+            if key_char == 'd':
+                #show the inventory; if an item is selected drop it
+                chosen_item = inventory_menu('Press the key next to an item to drop it, or any other to cancel.\n')
+                if chosen_item is not None:
+                    chosen_item.drop()
+
             return 'didnt-take-turn'
 
 def player_death(player):
+    #the game ended
     global game_state
     message('You died!', tcod.dark_red)
     game_state = 'dead'
 
+    #for added effect transform the player into a corpse
     player.char = '%'
     player.color = tcod.dark_red
 
 def monster_death(monster):
+    #transform it into a nasty corpse, it doesn't block, can't be
+    #attacked and doesn't move
     message(monster.name.capitalize() + ' is dead!', tcod.orange)
     monster.char = '%'
     monster.color = tcod.dark_red
@@ -565,7 +661,52 @@ def monster_death(monster):
     monster.name = 'remains of ' + monster.name
     monster.send_to_back()
 
+def target_tile(max_range=None):
+    #return the position of a tile left-clicked in the player's FOV (optionally in a range), or (None, None) if right clicked
+    global key, mouse
+    while True:
+        #render the screen, this erases the inventory and shows the names of objects under the mouse
+        tcod.console_flush()
+        tcod.sys_check_for_event(tcod.EVENT_KEY_PRESS|tcod.EVENT_MOUSE,key,mouse)
+        render_all()
+        (x, y) = (mouse.cx, mouse.cy)
+
+        if mouse.rbutton_pressed or key.vk == tcod.KEY_ESCAPE:
+            return (None, None) #cancel if the player right-clicked or pressed escape
+
+        #accept the target if the player clicked in FOV, and in a case where range is specified, if it's in that range
+        if (mouse.lbutton_pressed and tcod.map_is_in_fov(fov_map, x, y) and
+            (max_range is None or player.distance(x, y) <= max_range)):
+            return (x, y)
+
+def target_monster(max_range=None):
+    #returns clicked monster inside FOV up to a range, or none if right clicked
+    while True:
+        (x, y) = target_tile(max_range)
+        if x is None: #player cancelled
+            return None
+
+        #return the first clicked monster, otherwise continue looping
+        for obj in objects:
+            if obj.x == x and obj.y == y and obj.fighter and obj != player:
+                return obj
+
+def closest_monster(max_range):
+    #find closest enemy, up to a maximum range, and in the player's FOV
+    clesest_enemy = None
+    closest_dist = max_range + 1 #start with slightly more than maximum range
+
+    for object in objects:
+        if object.fighter and not object == player and tcod.map_is_in_fov(fov_map, object.x, object.y):
+            #calculate distance between object and player
+            dist = player.distance_to(object)
+            if dist < closest_dist: #it's closer so remember it
+                closest_enemy = object
+                closest_dist = dist
+    return closest_enemy
+
 def cast_heal():
+    #heal the player
     if player.fighter.hp == player.fighter.max_hp:
         message('You are already at full health', tcod.red)
         return 'cancelled'
@@ -573,22 +714,62 @@ def cast_heal():
     message('Your wounds are starting to feel better!', tcod.light_violet)
     player.fighter.heal(HEAL_AMOUNT)
 
-######
-#Init#
-######
+def cast_lightning():
+    #find the closest enemy (inside max range) and damage it
+    monster = closest_monster(LIGHTNING_RANGE)
+    if monster is None: #no enemy found within maximum range
+        message('No enemy is close enough to strike.', tcod.red)
+        return 'cancelled'
+
+    #zap it
+    message('A lightning bolt strikes the ' + monster.name + ' with a loud thunder! The damage is '
+            + str(LIGHTNING_DAMAGE) + ' hit points.', tcod.light_blue)
+    monster.fighter.take_damage(LIGHTNING_DAMAGE)
+
+def cast_fireball():
+    #aks the player for a target tile to throw a fireball at
+    message('Left-click a target tile for the fireball, or right-click to cancel.', tcod.light_cyan)
+    (x, y) = target_tile()
+    if x is None: return 'cancelled'
+    message('The fireball explodes, burning everything within ' + str(FIREBALL_RADIUS) + ' tiles!', tcod.orange)
+
+    for obj in objects: #damage every fighter in range, including the player
+        if obj.distance(x, y) <= FIREBALL_RADIUS and obj.fighter:
+            message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points!', tcod.orange)
+            obj.fighter.take_damage(FIREBALL_DAMAGE)
+
+def cast_confuse():
+    #ask the player for a target to confuse
+    message('Left-click an enemy to confuse it, or right-click to cancel.', tcod.light_cyan)
+    monster = target_monster(CONFUSE_RANGE)
+    if monster is None: return 'cancelled'
+
+    #replace the monster's AI with a "confused" one; after some turns it will restore the old AI
+    old_ai = monster.ai
+    monster.ai = ConfusedMonster(old_ai)
+    monster.ai.owner = monster #tell the component who owns it
+    message('The eyes of the ' + monster.name + ' look vacant, as he starts to stumble around.', tcod.light_green)
+
+##################
+#Init & Main Loop#
+##################
 tcod.console_set_custom_font('arial10x10.png', tcod.FONT_TYPE_GREYSCALE | tcod.FONT_LAYOUT_TCOD)
 tcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Rogue', False)
 tcod.sys_set_fps(LIMIT_FPS)
 con = tcod.console_new(MAP_WIDTH, MAP_HEIGHT)
 panel = tcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 
+#create the object representing the player
 fighter_component = Fighter(hp=30, defense=2, power=5, death_function=player_death)
 player = Object(0, 0, '@', 'player', tcod.white, blocks=True, fighter=fighter_component)
 
+#the list of objects, starting with the player
 objects = [player]
 
+#generate the map (at this point it's not drawn to the screen)
 make_map()
 
+#create FOV map according to generated map
 fov_map = tcod.map_new(MAP_WIDTH, MAP_HEIGHT)
 for y in range(MAP_HEIGHT):
     for x in range(MAP_WIDTH):
@@ -598,10 +779,13 @@ fov_recompute = True
 game_state = 'playing'
 player_action = None
 
+#create the inventory list, start empty
 inventory = []
 
+#create the list of mesages and colors, starts empty
 game_msgs = []
 
+#a warm welcoming message
 message('Welcome stranger, prepare to perish', tcod.red)
 
 mouse = tcod.Mouse()
@@ -609,18 +793,22 @@ key = tcod.Key()
 
 while not tcod.console_is_window_closed():
 
+    #render the screen
     tcod.sys_check_for_event(tcod.EVENT_KEY_PRESS|tcod.EVENT_MOUSE,key,mouse)
     render_all()
 
     tcod.console_flush()
 
+    #erase all objects at their old location, before they move
     for object in objects:
         object.clear()
 
+    #handle keys and exit game if needed
     player_action = handle_keys()
     if player_action == 'exit':
         break
 
+    #let monsters take their turn
     if game_state == 'playing' and player_action != 'didnt-take-turn':
         for object in objects:
             if object.ai:
