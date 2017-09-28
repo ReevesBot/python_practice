@@ -35,6 +35,8 @@ LIGHTNING_DAMAGE = 40
 LIGHTNING_RANGE = 5
 CONFUSE_RANGE = 8
 CONFUSED_DURATION = 10
+CHARM_RANGE = 8
+CHARM_DURATION = 10
 FIREBALL_RADIUS = 3
 FIREBALL_DAMAGE = 25
 
@@ -225,6 +227,33 @@ class ConfusedMonster:
             self.owner.ai = self.old_ai
             message('The ' + self.owner.name + ' is no longer confused!', tcod.red)
 
+class CharmedMonster:
+    def __init__(self, old_ai, num_turns=CHARM_DURATION, target=None):
+        self.old_ai = old_ai
+        self.num_turns = num_turns
+        self.target = target
+
+    def take_turn(self):
+        if self.num_turns > 0: #still charmed
+            #attack a random monster within player fov, and decrease the number of turns charmed
+            if self.target == None:
+                for object in objects:
+                    if object.fighter and object != player and tcod.map_is_in_fov(fov_map, player.x, player.y):
+                        self.target = object
+
+            elif self.target is not None:
+                if self.owner.distance_to(self.target) >=2:
+                    self.owner.move_towards(self.target.x, self.target.y)
+                    self.num_turns -= 1
+
+                elif self.target.hp > 0:
+                    self.owner.fighter.attack(target)
+                    self.num_turns -= 1
+
+        else: #restore previous AI
+            self.owner.ai = self.old_ai
+            message('The ' + self.owner.name + ' is no longer charmed!', tcod.red)
+
 class Item:
     #an item that can be picked up and used
     def __init__(self, use_function=None):
@@ -383,16 +412,16 @@ def random_choice_index(chances): #choose one option from list of chances, retur
 def random_choice(chances_dict):
     #choose one option from a dictionary of choices and return its key
     chances = chances_dict.values()
-    strings = chances_dict.keys()
+    strings = list(chances_dict.keys())
 
-    return string[random_choice_index(chances)]
+    return strings[random_choice_index(chances)]
 
 def from_dungeon_level(table):
     #returns a value that depends on level. the table specifies what value occurs after each level, default is 0
     for (value, level) in reversed(table):
         if dungeon_level >= level:
             return value
-        return 0
+    return 0
 
 def place_objects(room):
     #this is where we decide the chance of each monster appearing
@@ -406,7 +435,7 @@ def place_objects(room):
     monster_chances['troll'] = from_dungeon_level([[15, 3], [30, 5], [60, 7]])
 
     #number of items per room
-    max_items = from_dungeon_level([[1, 1], [2,4]])
+    max_items = from_dungeon_level([[1, 1], [2, 4]])
 
     #chances of each item (by default they have a chance of 0 at level one which then goes up)
     item_chances = {}
@@ -414,6 +443,7 @@ def place_objects(room):
     item_chances['lightning'] = from_dungeon_level([[25, 4]])
     item_chances['fireball'] = from_dungeon_level([[25, 6]])
     item_chances['confuse'] = from_dungeon_level([[25, 2]])
+    item_chances['charm'] = from_dungeon_level([[25, 1]])
 
     #choose random number of monsters
     num_monsters = tcod.random_get_int(0, 0, max_monsters)
@@ -473,6 +503,11 @@ def place_objects(room):
                 item_component = Item(use_function=cast_confuse)
 
                 item = Object(x, y, '#', 'scroll of confuse', tcod.light_green, item=item_component)
+
+            elif choice == 'charm':
+                item_component = Item(use_function=cast_charm)
+
+                item = Object(x, y, '#', 'scroll of charm', tcod.light_blue, item=item_component)
 
             objects.append(item)
             item.send_to_back() #items appear below other objects
@@ -859,6 +894,18 @@ def cast_confuse():
     monster.ai = ConfusedMonster(old_ai)
     monster.ai.owner = monster #tell the component who owns it
     message('The eyes of the ' + monster.name + ' look vacant, as he starts to stumble around.', tcod.light_green)
+
+def cast_charm():
+    #ask the player for a target to charm
+    message('Left-click an enemy to charm it, or right-click to cancel.', tcod.light_cyan)
+    monster = target_monster(CHARM_RANGE)
+    if monster is None: return 'cancelled'
+
+    #replace the monster's AI with a "charmed" one
+    old_ai = monster.ai
+    monster.ai = CharmedMonster(old_ai)
+    monster.ai.owner = monster
+    message('The ' + monster.name + ' looks at you softly for a moment before turning on his allies.', tcod.light_green)
 
 def save_game():
     #open a new empty shelve (possibly overwriting the old one) to write the game data
