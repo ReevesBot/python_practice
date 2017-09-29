@@ -119,7 +119,7 @@ class Object:
 
     def move(self, dx, dy):
         #move by the given amount if the destination is not blocked
-        if not map[self.x + dx][self.y + dy].blocked:
+        if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
 
@@ -154,7 +154,8 @@ class Object:
 
     def draw(self):
         #only show if it's visible to the player
-        if tcod.map_is_in_fov(fov_map, self.x, self.y):
+        if (tcod.map_is_in_fov(fov_map, self.x, self.y) or
+            (self.always_visible and map[self.x][self.y].explored)):
             #set the color and then draw the character that represents the object at its position
             tcod.console_set_default_foreground(con, self.color)
             tcod.console_put_char(con, self.x, self.y, self.char, tcod.BKGND_NONE)
@@ -197,7 +198,7 @@ class Fighter:
             message(self.owner.name.capitalize() + ' attacks ' + target.name + ' for ' + str(damage) + ' hit points')
             target.fighter.take_damage(damage)
         else:
-            message(self.owner.name.capitalize() + ' attacks ' + target_name + ' but it has no effect!')
+            message(self.owner.name.capitalize() + ' attacks ' + target.name + ' but it has no effect!')
 
     def take_damage(self, damage):
         #apply damage if possible
@@ -341,7 +342,7 @@ class Equipment:
             old_equipment.dequip()
 
         #equip the object and show a message about it
-        self.is_equiped = True
+        self.is_equipped = True
         message('Equipped ' + self.owner.name + ' from ' + self.slot + '.', tcod.light_green)
 
     def dequip(self):
@@ -592,11 +593,11 @@ def place_objects(room):
                 item = Object(x, y, '#', 'scroll of charm', tcod.light_blue, item=item_component)
 
             elif choice == 'sword':
-                item_component = Equipment(slot='right hand', power_bonus=3)
+                equipment_component = Equipment(slot='right hand', power_bonus=3)
                 item = Object(x, y, '/', 'sword', tcod.sky, equipment=equipment_component)
 
             elif choice == 'shield':
-                item_component = Equipment(slot='left hand', defense_bonus=1)
+                equipment_component = Equipment(slot='left hand', defense_bonus=1)
                 item = Object(x, y, '[', 'shield', tcod.darker_orange, equipment=equipment_component)
 
             objects.append(item)
@@ -689,6 +690,7 @@ def render_all():
     #render the players stats
     render_bar(1, 1, BAR_WIDTH, 'HP', player.fighter.hp, player.fighter.max_hp,
             tcod.light_red, tcod.darker_red)
+    tcod.console_print_ex(panel, 1, 3, tcod.BKGND_NONE, tcod.LEFT, 'Dungeon level ' + str(dungeon_level))
 
     #display the names of objects under the mouse
     tcod.console_set_default_foreground(panel, tcod.light_gray)
@@ -738,6 +740,8 @@ def menu(header, options, width):
 
     #calculate total height for the header (after auto-wrap) and one line per option
     header_height = tcod.console_get_height_rect(con, 0, 0, width, SCREEN_HEIGHT, header)
+    if header == '':
+        header_height = 0
     height = len(options) + header_height
 
     #create an off screen console that represents the menu's window
@@ -764,6 +768,9 @@ def menu(header, options, width):
     #present the root console to the player and wait for key press
     tcod.console_flush()
     key = tcod.console_wait_for_keypress(True)
+
+    if key.vk == tcod.KEY_ENTER and key.lalt: #(special case) Alt+Enter: toggle fullscreen
+        tcod.console_set_fullscreen(not tcod.console_is_fullscreen)
 
     #convert the ASCII codes to an index; if it corresponds to an option return it
     index = key.c - ord('a')
@@ -793,7 +800,7 @@ def msgbox(text, width=50):
     menu(text, [], width) #use menu() as sort of a "message box"
 
 def handle_keys():
-    key = tcod.console_wait_for_keypress(True)
+    global key
 
     if key.vk == tcod.KEY_ENTER and key.lalt:
         #Alt-Enter: toggle fullscreen
@@ -893,7 +900,7 @@ def player_death(player):
 def monster_death(monster):
     #transform it into a nasty corpse, it doesn't block, can't be
     #attacked and doesn't move
-    message(monster.name.capitalize() + ' is dead!', tcod.orange)
+    message('The ' + monster.name + ' is dead! You gain ' + str(monster.fighter.xp) + ' experiance points.', tcod.orange)
     monster.char = '%'
     monster.color = tcod.dark_red
     monster.blocks = False
@@ -1009,6 +1016,7 @@ def save_game():
     file['map'] = map
     file['objects'] = objects
     file['player_index'] = objects.index(player) #index of player in objects list
+    file['stair_index'] = objects.index(stairs) #same for the stairs
     file['inventory'] = inventory
     file['game_msgs'] = game_msgs
     file['game_state'] = game_state
@@ -1023,6 +1031,7 @@ def load_game():
     map = file['map']
     objects = file['objects']
     player = objects[file['player_index']] #get the index of player in objects and access it
+    stairs = objects[file['stair_index']]
     inventory = file['inventory']
     game_msgs = file['game_msgs']
     game_state = file['game_state']
